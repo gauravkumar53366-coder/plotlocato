@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Plot Locator - Google Satellite</title>
+
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+
+    <!-- Turf.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+    <style>
+        :root {
+            --primary: #1e40af;
+            --primary-dark: #1e3a8a;
+            --surface: #ffffff;
+            --border: #e5e7eb;
+            --text-primary: #111827;
+            --text-secondary: #6b7280;
+            --shadow: 0 8px 16px -4px rgba(0,0,0,0.25); /* Enhanced shadow */
+            --radius: 10px;
+            --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            --green: #22c55e; /* For active location toggle */
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background: #f9fafb; color: var(--text-primary); font-size: 10px; } /* Further reduced base font */
+        #map { position: fixed; inset: 0; z-index: 1; background: #e6eefc; }
+
+        /* Header */
+        .app-header { 
+            position: absolute; top: 12px; left: 12px; z-index: 1100; 
+            display: flex; flex-direction: column; align-items: flex-start; gap: 6px; /* Tighter gap */
+        }
+        .app-title { 
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark)); 
+            padding: 8px 14px; border-radius: var(--radius); color: white; 
+            font-weight: 600; display: flex; gap: 5px; align-items: center; 
+            box-shadow: 0 10px 20px rgba(30, 64, 175, 0.5); /* Enhanced shadow */
+            transform: translateY(0); transition: var(--transition); 
+        }
+        .app-title:hover { transform: translateY(-4px); box-shadow: 0 14px 24px rgba(30, 64, 175, 0.6); } /* Enhanced hover */
+        .control-buttons { display: flex; gap: 6px; }
+
+        .btn-3d {
+            display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+            background: var(--surface); color: var(--text-primary); border: none;
+            padding: 6px 10px; border-radius: var(--radius); cursor: pointer;
+            font-weight: 500; font-size: 11px; box-shadow: 0 8px 16px rgba(0,0,0,0.35), inset 0 -4px 8px rgba(0,0,0,0.45); /* Enhanced 3D */
+            transform: translateY(0); transition: var(--transition);
+        }
+        .btn-3d:hover { 
+            transform: translateY(-6px) scale(1.08); /* More pronounced lift */
+            box-shadow: 0 14px 24px rgba(0,0,0,0.25); /* Deeper shadow */
+            background: #f8fafc; 
+        }
+        .btn-3d:active { 
+            transform: translateY(0) scale(0.95); 
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15); 
+        }
+        .btn-3d-primary { 
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark)); 
+            color: white; 
+            box-shadow: 0 8px 16px rgba(30, 64, 175, 0.5); /* Enhanced shadow */
+        }
+        .btn-3d-primary:hover { 
+            box-shadow: 0 14px 24px rgba(30, 64, 175, 0.6); /* Enhanced hover */
+            transform: translateY(-6px) scale(1.08); 
+        }
+        .btn-icon { width: 32px; height: 32px; padding: 5px; } /* Smaller buttons */
+
+        .btn-3d.loading { position: relative; }
+        .btn-3d.loading::after {
+            content: ''; position: absolute; width: 14px; height: 14px; 
+            border: 2px solid #fff; border-top-color: transparent;
+            border-radius: 50%; animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.4); opacity: 0.6; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .pulse-marker { animation: pulse 1.5s infinite; }
+
+        /* Sidebar (Menu) */
+        .sidebar { 
+            position: absolute; left: 12px; top: 70px; z-index: 1050; 
+            width: 150px; /* Further reduced width */ font-size: 10px; max-width: 75vw; background: #1e3a8a; color: white; 
+            border-radius: var(--radius); transform: translateX(-110%); 
+            transition: var(--transition); overflow: hidden; 
+            max-height: calc(100% - 90px); display: flex; flex-direction: column; 
+            box-shadow: 0 12px 24px rgba(0,0,0,0.2); border: 1px solid var(--border); 
+        }
+        .sidebar.open { transform: translateX(0); }
+        .sidebar-header { 
+            padding: 8px 12px; background: linear-gradient(135deg, var(--primary), var(--primary-dark)); 
+            color: #fff; display: flex; align-items: center; justify-content: space-between; 
+            font-weight: 600; font-size: 11px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); 
+        }
+        .sidebar-content { padding: 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; } /* Tighter gap */
+
+        .section { 
+            background: #f8fafc; padding: 6px 8px; /* Reduced padding */ border-radius: var(--radius); 
+            border-left: 3px solid var(--primary); box-shadow: 0 4px 8px rgba(0,0,0,0.1); 
+        }
+        .section-title { 
+            font-weight: 600; font-size: 11px; display: flex; gap: 5px; 
+            align-items: center; color: var(--text-primary); margin-bottom: 3px; 
+        }
+
+        .form-group { margin-bottom: 3px; }
+        .form-label { font-size: 9px; color: var(--text-secondary); margin-bottom: 2px; display: block; font-weight: 500; }
+        .input { 
+            width: 100%; padding: 5px 8px; border-radius: var(--radius); 
+            border: 1px solid var(--border); background: var(--surface); 
+            color: var(--text-primary); font-size: 10px; transition: var(--transition); 
+        }
+        .input:focus { 
+            border-color: var(--primary); box-shadow: 0 0 0 2px rgba(30, 64, 175, 0.15); outline: none; 
+        }
+
+        .input-group { display: flex; gap: 3px; align-items: center; }
+        .input-group .input { flex: 1; }
+        .input-group .btn-3d { flex-shrink: 0; }
+
+        .sidebar .btn-3d { width: 32px; height: 32px; padding: 0; border-radius: var(--radius); justify-content: center; font-size: 12px; }
+        .sidebar .btn-3d span { display: none; }
+        .sidebar .btn-3d i { font-size: 12px; }
+
+        .toggle-group { display: flex; justify-content: space-between; align-items: center; padding: 3px; }
+        .toggle-label { display: flex; gap: 5px; align-items: center; font-weight: 500; color: var(--text-primary); font-size: 10px; }
+
+        /* Toggle Switch */
+        .toggle-switch {
+            position: relative; display: inline-block; width: 45px; height: 22px;
+        }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider {
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ccc; transition: .4s; border-radius: 22px;
+        }
+        .toggle-slider:before {
+            position: absolute; content: ""; height: 14px; width: 14px; left: 4px; bottom: 4px;
+            background-color: white; transition: .4s; border-radius: 50%;
+        }
+        input:checked + .toggle-slider { background-color: var(--primary); }
+        input:checked + .toggle-slider:before { transform: translateX(23px); }
+
+        .leaflet-control-zoom { 
+            border: none !important; border-radius: var(--radius) !important; 
+            overflow: hidden; box-shadow: 0 8px 16px rgba(0,0,0,0.15) !important; /* Enhanced shadow */
+        }
+        .leaflet-control-zoom a { 
+            background: var(--surface) !important; color: var(--text-primary) !important; 
+            width: 32px; height: 32px; line-height: 32px; font-size: 14px; 
+        }
+        .leaflet-popup-content-wrapper { 
+            background: var(--surface); border-radius: var(--radius); 
+            border: 1px solid var(--border); padding: 8px; 
+            box-shadow: 0 12px 24px rgba(0,0,0,0.2); /* Enhanced shadow */
+        }
+        .leaflet-popup-close-button { 
+            background: var(--primary); color: #fff; border-radius: 50%; 
+            width: 22px; height: 22px; line-height: 22px; top: 6px; right: 6px; 
+        }
+
+        .toast { 
+            position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 2000; 
+            padding: 8px 14px; background: var(--surface); border-radius: var(--radius); 
+            box-shadow: 0 12px 24px rgba(0,0,0,0.25); /* Enhanced shadow */ display: flex; gap: 6px; 
+            align-items: center; opacity: 0; transition: var(--transition); pointer-events: none; 
+            border: 1px solid var(--border); 
+        }
+        .toast.show { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+
+        .map-legend, .leaflet-control-attribution { display: none !important; }
+
+        @media (max-width: 780px) {
+            .sidebar { width: 180px; left: 8px; top: 65px; }
+            .app-header { left: 10px; top: 10px; gap: 6px; }
+        }
+
+        /* Menu Button Blue */
+        #menuBtn {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: white;
+            box-shadow: 0 8px 16px rgba(30, 64, 175, 0.5); /* Enhanced shadow */
+        }
+        #menuBtn:hover {
+            background: linear-gradient(135deg, var(--primary-dark), #1e3a8a);
+            box-shadow: 0 14px 24px rgba(30, 64, 175, 0.6); /* Enhanced hover */
+            transform: translateY(-6px) scale(1.08);
+        }
+
+        /* Green for active location toggle */
+        .btn-3d.active {
+            background: linear-gradient(135deg, var(--green), #16a34a);
+            color: white;
+        }
+        .btn-3d.active:hover {
+            background: linear-gradient(135deg, #16a34a, #15803d);
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <div class="app-header">
+        <div class="app-title">
+            <i class="fas fa-map-marker-alt"></i>
+            <span id="appTitleText">Plot Locator</span>
+        </div>
+        <div class="control-buttons">
+            <button id="menuBtn" class="btn-3d" title="मेन्यू">
+                <i class="fas fa-bars"></i><span>मेन्यू</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="sidebar" class="sidebar" aria-hidden="true">
+        <div class="sidebar-header">
+            <span id="sidebarTitle">Plot Locator टूल्स</span>
+            <button id="closeSidebarBtn" class="btn-3d btn-icon" title="बंद करें">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="sidebar-content">
+            <div class="section">
+                <div style="display:flex; flex-wrap:wrap; gap:3px;">
+                    <button id="homeBtn" class="btn-3d" title="होम">
+                        <i class="fas fa-home"></i><span>होम</span>
+                    </button>
+                    <button id="languageBtn" class="btn-3d" title="भाषा बदलें">
+                        <i class="fas fa-language"></i><span>भाषा</span>
+                    </button>
+                    <button id="locationToggleBtn" class="btn-3d" title="लोकेशन ON/OFF">
+                        <i class="fas fa-crosshairs"></i><span>लोकेशन</span>
+                    </button>
+                    <button id="directionBtn" class="btn-3d" title="दिशा">
+                        <i class="fas fa-compass"></i><span>दिशा</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-search"></i><span id="plotSearchTitle">प्लॉट खोजें</span>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" id="plotInputLabel">प्लॉट नंबर दर्ज करें</label>
+                    <div class="input-group">
+                        <input id="multiPlotInput" class="input" placeholder="उदा: 2576 या 2576,2577" />
+                        <button id="multiSearchBtn" class="btn-3d btn-3d-primary" title="प्लॉट खोजें">
+                            <i class="fas fa-search"></i><span>खोज</span>
+                        </button>
+                    </div>
+                    <div style="font-size:9px;color:var(--text-secondary);margin-top:3px;" id="maxPlotText">
+                        अधिकतम 5 प्लॉट एक साथ खोजें
+                    </div>
+                </div>
+                <div style="display:flex; gap:5px; margin-top:3px;">
+                    <button id="resetSearchBtn" class="btn-3d" title="रीसेट">
+                        <i class="fas fa-refresh"></i><span>रीसेट</span>
+                    </button>
+                    <button id="voiceBtn" class="btn-3d" title="वॉयस सर्च">
+                        <i class="fas fa-microphone"></i><span>आवाज</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-layer-group"></i><span id="displaySettingsTitle">डिस्प्ले सेटिंग</span>
+                </div>
+                <div class="toggle-group">
+                    <div class="toggle-label">
+                        <i class="fas fa-vector-square"></i><span id="showPlotsLabel">प्लॉट्स दिखाएं</span>
+                    </div>
+                    <label class="toggle-switch" title="प्लॉट्स दिखाएं/छुपाएँ">
+                        <input type="checkbox" id="togglePlots" checked />
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="toggle-group">
+                    <div class="toggle-label">
+                        <i class="fas fa-tag"></i><span id="showLabelsLabel">प्लॉट नंबर दिखाएं</span>
+                    </div>
+                    <label class="toggle-switch" title="प्लॉट नंबर दिखाएँ/छुपाएँ">
+                        <input type="checkbox" id="toggleLabels" />
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-location-arrow"></i><span id="locationTitle">लोकेशन</span>
+                </div>
+                <div style="display:flex; gap:5px;">
+                    <button id="locateBtn" class="btn-3d" title="मेरी लोकेशन">
+                        <i class="fas fa-location-crosshairs"></i><span>मेरी लोकेशन</span>
+                    </button>
+                    <button id="fitBtn" class="btn-3d" title="सभी दिखाएं">
+                        <i class="fas fa-expand"></i><span>सभी दिखाएं</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-ruler-combined"></i><span id="manualMeasureTitle">मैनुअल माप टूल</span>
+                </div>
+                <button id="measureToggleBtn" class="btn-3d" title="मैनुअल माप">
+                    <i class="fas fa-ruler"></i><span>माप</span>
+                </button>
+                <div id="measurePanel" class="measure-panel" style="display:none; margin-top:5px;">
+                    <div style="display:flex; flex-direction:column; gap:3px;">
+                        <div style="display:flex; gap:3px; flex-wrap:wrap;">
+                            <button id="startMeasureBtn" class="btn-3d" title="शुरू">
+                                <i class="fas fa-play"></i><span>शुरू</span>
+                            </button>
+                            <button id="undoMeasureBtn" class="btn-3d" disabled title="पूर्ववत">
+                                <i class="fas fa-undo"></i><span>पूर्ववत</span>
+                            </button>
+                            <button id="finishMeasureBtn" class="btn-3d" disabled title="समाप्त">
+                                <i class="fas fa-check"></i><span>समाप्त</span>
+                            </button>
+                            <button id="clearMeasureBtn" class="btn-3d" title="साफ़">
+                                <i class="fas fa-trash"></i><span>साफ़</span>
+                            </button>
+                        </div>
+                        <div id="measureInfo" class="measure-info" style="background:var(--surface); padding:5px; border-radius:var(--radius); border:1px solid var(--border); color:var(--text-secondary);">
+                            बिंदु: 0
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" id="unitLabel">माप इकाई</label>
+                            <select id="unitSelect" class="input">
+                                <option value="sqft">वर्ग फुट (sq ft)</option>
+                                <option value="sqm" selected>वर्ग मीटर (sq m)</option>
+                                <option value="acre">एकड़ (acre)</option>
+                                <option value="dismil">डिसमिल (dismil)</option>
+                                <option value="bigha">बीघा (bigha)</option>
+                                <option value="kattha">कट्ठा (kattha)</option>
+                                <option value="dhur">धुर (dhur)</option>
+                                <option value="dhurki">धुरकी (dhurki)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-question-circle"></i><span id="helpTitle">सहायता</span>
+                </div>
+                <button id="userGuideBtn" class="btn-3d" title="उपयोग गाइड">
+                    <i class="fas fa-book"></i><span>गाइड</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="userGuidePanel" class="guide-panel" style="position:absolute; left:12px; top:70px; z-index:1050; width:260px; max-width:80vw; background:var(--surface); border-radius:var(--radius); padding:14px; transform:translateX(-120%); transition:all .3s cubic-bezier(0.25, 0.8, 0.25, 1); box-shadow: 0 12px 24px rgba(0,0,0,0.25); border:1px solid var(--border);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <div style="font-weight:600; display:flex; gap:6px; align-items:center;">
+                <i class="fas fa-book-open"></i> <span id="guideTitle">उपयोग गाइड</span>
+            </div>
+            <button id="closeGuideBtn" class="btn-3d btn-icon" title="बंद">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div id="userGuideContent" style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
+            <h3 style="font-size:13px; color:var(--text-primary); margin-bottom:6px;" id="guideSubtitle">Plot Locator गाइड</h3>
+            <ul style="padding-left:18px; margin-top:6px;">
+                <li><b id="guideSearch">प्लॉट्स खोज:</b> <span id="guideSearchDesc">मेन्यू खोलकर नंबर डालें (उदा. 2576 या 2576,2577) और खोज दबाएँ।</span></li>
+                <li><b id="guideNumbers">प्लॉट नंबर:</b> <span id="guideNumbersDesc">'प्लॉट नंबर दिखाएं' टॉगल से ज़ूम पर नंबर दिखेंगे (ज़ूम 16+)।</span></li>
+                <li><b id="guideLocation">मेरी लोकेशन:</b> <span id="guideLocationDesc">लोकेशन बटन दबाकर अपनी स्थिति देखें।</span></li>
+                <li><b id="guideManual">मैनुअल माप:</b> <span id="guideManualDesc">माप शुरू करें → नक्शे पर क्लिक करके बिंदु जोड़ें → समाप्त पर क्लिक करें।</span></li>
+            </ul>
+            <p style="margin-top:8px; font-size:10px; color:var(--text-secondary);" id="guideNote">नोट: data.geojson फाइल चाहिए।</p>
+        </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite">
+        <i class="fas fa-info-circle"></i><span id="toastMessage"></span>
+    </div>
+
+    <div class="map-legend" aria-hidden="true" style="position:absolute; bottom:18px; right:8px; z-index:1000; background:var(--surface); padding:10px; border-radius:var(--radius); box-shadow:0 8px 16px rgba(0,0,0,0.15); border:1px solid var(--border);">
+        <div style="display:flex; gap:6px; align-items:center;">
+            <div style="width:18px;height:18px;background:#f59e0b;border-radius:3px;"></div>
+            <span>प्लॉट क्षेत्र</span>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; margin-top:5px;">
+            <div style="width:18px;height:18px;background:#ef4444;border-radius:3px;"></div>
+            <span>चयनित प्लॉट</span>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; margin-top:5px;">
+            <div style="width:18px;height:18px;border-radius:50%;background:transparent;border:3px solid white;"></div>
+            <span>मैनुअल माप बिंदु</span>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; margin-top:5px;">
+            <div style="width:18px;height:18px;border-radius:50%;background:#2563eb;border:2px solid white;"></div>
+            <span>रियल-टाइम लोकेशन</span>
+        </div>
+    </div>
+
+    <script>
+        // Language management
+        let currentLanguage = 'hi';
+        
+        const translations = {
+            hi: {
+                appTitle: "Plot Locator",
+                menu: "मेन्यू",
+                home: "होम",
+                language: "English",
+                languageTitle: "Switch to English",
+                sidebarTitle: "Plot Locator टूल्स",
+                plotSearch: "प्लॉट खोजें",
+                plotInput: "प्लॉट नंबर दर्ज करें",
+                examplePlot: "उदा: 2576 या 2576,2577",
+                maxPlot: "अधिकतम 5 प्लॉट एक साथ खोजें",
+                search: "खोज",
+                reset: "रीसेट",
+                voice: "आवाज",
+                displaySettings: "डिस्प्ले सेटिंग",
+                showPlots: "प्लॉट्स दिखाएं",
+                showLabels: "प्लॉट नंबर दिखाएं",
+                location: "लोकेशन",
+                myLocation: "मेरी लोकेशन",
+                showAll: "सभी दिखाएं",
+                manualMeasure: "मैनुअल माप टूल",
+                measure: "माप",
+                start: "शुरू",
+                undo: "पूर्ववत",
+                finish: "समाप्त",
+                clear: "साफ़",
+                unit: "माप इकाई",
+                help: "सहायता",
+                guide: "गाइड",
+                guideTitle: "उपयोग गाइड",
+                guideSubtitle: "Plot Locator गाइड",
+                guideSearch: "प्लॉट्स खोज:",
+                guideSearchDesc: "मेन्यू खोलकर नंबर डालें (उदा. 2576 या 2576,2577) और खोज दबाएँ।",
+                guideNumbers: "प्लॉट नंबर:",
+                guideNumbersDesc: "'प्लॉट नंबर दिखाएं' टॉगल से ज़ूम पर नंबर दिखेंगे (ज़ूम 16+)।",
+                guideLocation: "मेरी लोकेशन:",
+                guideLocationDesc: "लोकेशन बटन दबाकर अपनी स्थिति देखें।",
+                guideManual: "मैनुअल माप:",
+                guideManualDesc: "माप शुरू करें → नक्शे पर क्लिक करके बिंदु जोड़ें → समाप्त पर क्लिक करें।",
+                guideNote: "नोट: data.geojson फाइल चाहिए।"
+            },
+            en: {
+                appTitle: "Plot Locator",
+                menu: "Menu",
+                home: "Home",
+                language: "हिंदी",
+                languageTitle: "हिंदी में बदलें",
+                sidebarTitle: "Plot Locator Tools",
+                plotSearch: "Plot Search",
+                plotInput: "Enter plot number",
+                examplePlot: "e.g.: 2576 or 2576,2577",
+                maxPlot: "Maximum 5 plots at a time",
+                search: "Search",
+                reset: "Reset",
+                voice: "Voice",
+                displaySettings: "Display Settings",
+                showPlots: "Show Plots",
+                showLabels: "Show Plot Numbers",
+                location: "Location",
+                myLocation: "My Location",
+                showAll: "Show All",
+                manualMeasure: "Manual Measure Tool",
+                measure: "Measure",
+                start: "Start",
+                undo: "Undo",
+                finish: "Finish",
+                clear: "Clear",
+                unit: "Measurement Unit",
+                help: "Help",
+                guide: "Guide",
+                guideTitle: "User Guide",
+                guideSubtitle: "Plot Locator Guide",
+                guideSearch: "Plot Search:",
+                guideSearchDesc: "Open menu, enter numbers (e.g. 2576 or 2576,2577) and press search.",
+                guideNumbers: "Plot Numbers:",
+                guideNumbersDesc: "Plot numbers will be visible at zoom level 16+ with 'Show Plot Numbers' toggle.",
+                guideLocation: "My Location:",
+                guideLocationDesc: "Press location button to see your current position.",
+                guideManual: "Manual Measure:",
+                guideManualDesc: "Start measure → Click on map to add points → Click finish.",
+                guideNote: "Note: data.geojson file is required."
+            }
+        };
+
+        function setLanguage(lang) {
+            currentLanguage = lang;
+            const t = translations[lang];
+            document.getElementById('appTitleText').textContent = t.appTitle;
+            document.getElementById('menuBtn').querySelector('span').textContent = t.menu;
+            document.getElementById('menuBtn').title = t.menu;
+            document.getElementById('homeBtn').querySelector('span').textContent = t.home;
+            document.getElementById('homeBtn').title = t.home;
+            document.getElementById('languageBtn').querySelector('span').textContent = t.language;
+            document.getElementById('languageBtn').title = t.languageTitle;
+            document.getElementById('sidebarTitle').textContent = t.sidebarTitle;
+            document.getElementById('plotSearchTitle').textContent = t.plotSearch;
+            document.getElementById('plotInputLabel').textContent = t.plotInput;
+            document.getElementById('multiPlotInput').placeholder = t.examplePlot;
+            document.getElementById('maxPlotText').textContent = t.maxPlot;
+            document.getElementById('multiSearchBtn').querySelector('span').textContent = t.search;
+            document.getElementById('multiSearchBtn').title = t.search;
+            document.getElementById('resetSearchBtn').querySelector('span').textContent = t.reset;
+            document.getElementById('resetSearchBtn').title = t.reset;
+            document.getElementById('voiceBtn').querySelector('span').textContent = t.voice;
+            document.getElementById('voiceBtn').title = t.voice;
+            document.getElementById('displaySettingsTitle').textContent = t.displaySettings;
+            document.getElementById('showPlotsLabel').textContent = t.showPlots;
+            document.getElementById('showLabelsLabel').textContent = t.showLabels;
+            document.getElementById('locationTitle').textContent = t.location;
+            document.getElementById('locateBtn').querySelector('span').textContent = t.myLocation;
+            document.getElementById('locateBtn').title = t.myLocation;
+            document.getElementById('fitBtn').querySelector('span').textContent = t.showAll;
+            document.getElementById('fitBtn').title = t.showAll;
+            document.getElementById('manualMeasureTitle').textContent = t.manualMeasure;
+            document.getElementById('measureToggleBtn').querySelector('span').textContent = t.measure;
+            document.getElementById('measureToggleBtn').title = t.measure;
+            document.getElementById('startMeasureBtn').querySelector('span').textContent = t.start;
+            document.getElementById('startMeasureBtn').title = t.start;
+            document.getElementById('undoMeasureBtn').querySelector('span').textContent = t.undo;
+            document.getElementById('undoMeasureBtn').title = t.undo;
+            document.getElementById('finishMeasureBtn').querySelector('span').textContent = t.finish;
+            document.getElementById('finishMeasureBtn').title = t.finish;
+            document.getElementById('clearMeasureBtn').querySelector('span').textContent = t.clear;
+            document.getElementById('clearMeasureBtn').title = t.clear;
+            document.getElementById('unitLabel').textContent = t.unit;
+            document.getElementById('helpTitle').textContent = t.help;
+            document.getElementById('userGuideBtn').querySelector('span').textContent = t.guide;
+            document.getElementById('userGuideBtn').title = t.guide;
+            document.getElementById('guideTitle').textContent = t.guideTitle;
+            document.getElementById('guideSubtitle').textContent = t.guideSubtitle;
+            document.getElementById('guideSearch').textContent = t.guideSearch;
+            document.getElementById('guideSearchDesc').textContent = t.guideSearchDesc;
+            document.getElementById('guideNumbers').textContent = t.guideNumbers;
+            document.getElementById('guideNumbersDesc').textContent = t.guideNumbersDesc;
+            document.getElementById('guideLocation').textContent = t.guideLocation;
+            document.getElementById('guideLocationDesc').textContent = t.guideLocationDesc;
+            document.getElementById('guideManual').textContent = t.guideManual;
+            document.getElementById('guideManualDesc').textContent = t.guideManualDesc;
+            document.getElementById('guideNote').textContent = t.guideNote;
+        }
+
+        // Map initialization
+        const map = L.map('map', { zoomControl: false }).setView([25.339365, 85.765942], 16);
+        L.control.zoom({ position: 'bottomleft' }).addTo(map);
+
+        L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+            maxZoom: 22, /* Increased to 22 */
+            subdomains: ['mt0','mt1','mt2','mt3'],
+            attribution: ''
+        }).addTo(map);
+
+        // Constants
+        const PLOT_PROP = 'Name';
+        const LABEL_BATCH_SIZE = 50;
+        const MIN_ZOOM_FOR_LABELS = 16;
+        const MAX_MULTI_SEARCH = 5;
+
+        // UI references
+        const sidebar = document.getElementById('sidebar');
+        const menuBtn = document.getElementById('menuBtn');
+        const closeSidebarBtn = document.getElementById('closeSidebarBtn');
+        const homeBtn = document.getElementById('homeBtn');
+        const languageBtn = document.getElementById('languageBtn');
+        const locationToggleBtn = document.getElementById('locationToggleBtn');
+        const directionBtn = document.getElementById('directionBtn');
+        const multiSearchBtn = document.getElementById('multiSearchBtn');
+        const resetSearchBtn = document.getElementById('resetSearchBtn');
+        const voiceBtn = document.getElementById('voiceBtn');
+        const multiPlotInput = document.getElementById('multiPlotInput');
+        const togglePlotsBtn = document.getElementById('togglePlots');
+        const toggleLabelsBtn = document.getElementById('toggleLabels');
+        const locateBtn = document.getElementById('locateBtn');
+        const fitBtn = document.getElementById('fitBtn');
+        const measureToggleBtn = document.getElementById('measureToggleBtn');
+        const measurePanel = document.getElementById('measurePanel');
+        const startMeasureBtn = document.getElementById('startMeasureBtn');
+        const undoMeasureBtn = document.getElementById('undoMeasureBtn');
+        const finishMeasureBtn = document.getElementById('finishMeasureBtn');
+        const clearMeasureBtn = document.getElementById('clearMeasureBtn');
+        const measureInfo = document.getElementById('measureInfo');
+        const unitSelect = document.getElementById('unitSelect');
+        const userGuideBtn = document.getElementById('userGuideBtn');
+        const userGuidePanel = document.getElementById('userGuidePanel');
+        const closeGuideBtn = document.getElementById('closeGuideBtn');
+        const toastEl = document.getElementById('toast');
+        const toastMessage = document.getElementById('toastMessage');
+
+        function toast(msg, ms = 2200) {
+            toastMessage.textContent = msg;
+            toastEl.classList.add('show');
+            clearTimeout(window._t);
+            window._t = setTimeout(() => toastEl.classList.remove('show'), ms);
+        }
+
+        // Layers and state
+        let dataGeo = null;
+        const plotLayer = L.geoJSON(null, {
+            style: () => ({ color: '#f59e0b', weight: 2, fillOpacity: 0.15 }),
+            onEachFeature: (feature, layer) => {
+                layer.on('click', () => {
+                    const pno = feature?.properties?.[PLOT_PROP] ?? 'Unknown';
+                    const area_m2 = calculateArea(feature);
+                    layer.bindPopup(`<b>प्लॉट:</b> ${pno}<br>${formatAll(area_m2)}`).openPopup();
+                    toast(`प्लॉट ${pno} देखा गया`);
+                });
+            }
+        }).addTo(map);
+        const labelLayer = L.layerGroup();
+        let highlightLayer = null;
+        let labelsBuilt = false;
+        let plotsVisible = true, labelsVisible = false;
+
+        // Real-time location variables
+        let locationMarker = null, locationCircle = null;
+        let locationWatchId = null;
+        let isLocationActive = false;
+
+        // Load GeoJSON
+        function loadGeoJSONData() {
+            map.getContainer().classList.add('loading');
+            fetch('data.geojson')
+                .then(response => {
+                    if (!response.ok) throw new Error('GeoJSON not found');
+                    return response.json();
+                })
+                .then(geojson => {
+                    dataGeo = geojson;
+                    plotLayer.addData(geojson);
+                    if (plotLayer.getBounds().isValid()) map.fitBounds(plotLayer.getBounds(), { padding: [30, 30] });
+                    map.getContainer().classList.remove('loading');
+                    toast('प्लॉट्स लोड हुए');
+                })
+                .catch(error => {
+                    console.error('GeoJSON load error:', error);
+                    toast('GeoJSON लोड करने में त्रुटि - data.geojson फाइल जांचें');
+                    map.getContainer().classList.remove('loading');
+                });
+        }
+        loadGeoJSONData();
+
+        // Area calculation
+        function calculateArea(feature) {
+            try {
+                if (!feature) return 0;
+                return turf.area(feature);
+            } catch (e) {
+                console.error('Area calc error:', e);
+                return 0;
+            }
+        }
+
+        // Formatting functions
+        function formatAll(area_m2) {
+            const sqft = area_m2 * 10.7639104167;
+            const acre = sqft / 43560;
+            const dismil = acre * 100;
+            const kattha = acre * 32;
+            const bigha = kattha / 20;
+            const dhur = kattha * 20;
+            const dhurki = dhur * 20;
+            return `${area_m2.toFixed(2)} m²<br>${sqft.toFixed(1)} sq ft<br>${acre.toFixed(4)} acre<br>${dismil.toFixed(2)} dismil<br>${bigha.toFixed(2)} बीघा<br>${kattha.toFixed(2)} कट्ठा<br>${dhur.toFixed(2)} धुर<br>${dhurki.toFixed(2)} धुरकी`;
+        }
+
+        function formatSelected(area_m2, unitSelectElement) {
+            const unit = unitSelectElement ? unitSelectElement.value : 'sqm';
+            const sqft = area_m2 * 10.7639104167;
+            const acre = sqft / 43560;
+            const dismil = acre * 100;
+            const kattha = acre * 32;
+            const bigha = kattha / 20;
+            const dhur = kattha * 20;
+            const dhurki = dhur * 20;
+            switch (unit) {
+                case 'sqm': return `${area_m2.toFixed(2)} m²`;
+                case 'sqft': return `${sqft.toFixed(1)} sq ft`;
+                case 'acre': return `${acre.toFixed(4)} acre`;
+                case 'dismil': return `${dismil.toFixed(2)} dismil`;
+                case 'bigha': return `${bigha.toFixed(2)} बीघा`;
+                case 'kattha': return `${kattha.toFixed(2)} कट्ठा`;
+                case 'dhur': return `${dhur.toFixed(2)} धुर`;
+                case 'dhurki': return `${dhurki.toFixed(2)} धुरकी`;
+                default: return `${area_m2.toFixed(2)} m²`;
+            }
+        }
+
+        function formatLength(meters) {
+            if (meters >= 1000) return `${(meters / 1000).toFixed(3)} km`;
+            if (meters >= 1) return `${meters.toFixed(2)} m`;
+            return `${(meters * 100).toFixed(1)} cm`;
+        }
+
+        // UI interactions
+        menuBtn.addEventListener('click', () => {
+            sidebar.classList.toggle('open');
+            userGuidePanel.classList.remove('open');
+            toast(sidebar.classList.contains('open') ? 'मेन्यू खुला' : 'मेन्यू बंद');
+        });
+        
+        closeSidebarBtn.addEventListener('click', () => {
+            sidebar.classList.remove('open');
+            toast('मेन्यू बंद');
+        });
+
+        homeBtn.addEventListener('click', () => {
+            stopLocationTracking();
+            clearMeasure(true);
+            measuring = false;
+            measurePanel.style.display = 'none';
+            sidebar.classList.remove('open');
+            userGuidePanel.classList.remove('open');
+            if (plotLayer.getBounds().isValid()) map.fitBounds(plotLayer.getBounds(), { padding: [30, 30] });
+            toast('होम पर लौटें');
+        });
+
+        languageBtn.addEventListener('click', () => {
+            const newLang = currentLanguage === 'hi' ? 'en' : 'hi';
+            setLanguage(newLang);
+            toast(newLang === 'hi' ? 'भाषा हिंदी में बदली गई' : 'Language changed to English');
+        });
+
+        togglePlotsBtn.addEventListener('change', () => {
+            plotsVisible = togglePlotsBtn.checked;
+            if (plotsVisible) { map.addLayer(plotLayer); toast('प्लॉट्स चालू'); }
+            else { map.removeLayer(plotLayer); toast('प्लॉट्स बंद'); }
+        });
+
+        toggleLabelsBtn.addEventListener('change', () => {
+            labelsVisible = toggleLabelsBtn.checked;
+            if (labelsVisible) {
+                if (!labelsBuilt && map.getZoom() >= MIN_ZOOM_FOR_LABELS) buildLabels();
+                if (map.getZoom() >= MIN_ZOOM_FOR_LABELS) map.addLayer(labelLayer);
+                else toast('प्लॉट नंबर देखने के लिए ज़ूम करें');
+            } else {
+                map.removeLayer(labelLayer);
+                toast('प्लॉट नंबर बंद');
+            }
+        });
+
+        multiSearchBtn.addEventListener('click', () => {
+            const queries = multiPlotInput.value.trim().toLowerCase().split(',').map(q => q.trim()).filter(q => q);
+            if (!queries.length) return toast('प्लॉट नंबर डालें (उदा. 2576 या 2576,2577)');
+            if (queries.length > MAX_MULTI_SEARCH) return toast(`अधिकतम ${MAX_MULTI_SEARCH} प्लॉट्स खोजें`);
+            if (!dataGeo) return toast('प्लॉट्स लोड नहीं हुए');
+            const found = [];
+            const bounds = L.latLngBounds();
+            if (highlightLayer) { map.removeLayer(highlightLayer); highlightLayer = null; }
+            highlightLayer = L.geoJSON(null, { style: { color: '#ef4444', weight: 3, fillOpacity: 0.3 } }).addTo(map);
+            queries.forEach(q => {
+                const feat = (dataGeo.features || []).find(f => {
+                    const p = f.properties || {};
+                    return [PLOT_PROP, 'plot_no', 'PlotNumber', 'name', 'NAME', 'Plot_No'].some(k => p[k] && String(p[k]).toLowerCase() === q);
+                });
+                if (feat) {
+                    found.push(feat);
+                    highlightLayer.addData(feat);
+                    bounds.extend(L.geoJSON(feat).getBounds());
+                }
+            });
+            if (!found.length) return toast('कोई प्लॉट नहीं मिला');
+            const popupContent = found.map(f => {
+                const pno = f.properties[PLOT_PROP] ?? 'Unknown';
+                const area_m2 = calculateArea(f);
+                const c = turf.centroid(f).geometry.coordinates;
+                return `<b>प्लॉट:</b> ${pno}<br>${formatAll(area_m2)}<br><a href="https://www.google.com/maps?q=${c[1]},${c[0]}" target="_blank">Google Maps में खोलें</a>`;
+            }).join('<hr>');
+            if (bounds.isValid()) map.fitBounds(bounds, { padding: [20, 20] });
+            const center = bounds.getCenter();
+            L.popup().setLatLng(center).setContent(popupContent).openOn(map);
+            toast(`प्लॉट्स मिले: ${found.length}`);
+        });
+
+        resetSearchBtn.addEventListener('click', () => {
+            multiPlotInput.value = '';
+            if (highlightLayer) { map.removeLayer(highlightLayer); highlightLayer = null; }
+            if (plotLayer.getBounds().isValid()) map.fitBounds(plotLayer.getBounds(), { padding: [30, 30] });
+            map.closePopup();
+            toast('खोज रीसेट की गई');
+        });
+
+        // Voice Search
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            const recognition = new SpeechRecognition();
+            recognition.lang = "hi-IN";
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+
+            voiceBtn.addEventListener("click", () => {
+                toast("🎤 बोलना शुरू करें...");
+                try { recognition.start(); }
+                catch (e) { console.warn('Recognition start error', e); }
+            });
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript.trim();
+                multiPlotInput.value = transcript;
+                toast(`🔍 खोजा गया: ${transcript}`);
+                multiSearchBtn.click();
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech error', event);
+                toast("वॉयस त्रुटि: " + (event.error || 'error'));
+            };
+
+            recognition.onend = () => {
+                toast("🎤 वॉयस सर्च बंद");
+            };
+        } else {
+            voiceBtn.addEventListener("click", () => toast("आपके ब्राउज़र में वॉयस सर्च सपोर्ट नहीं है"));
+        }
+
+        fitBtn.addEventListener('click', () => {
+            if (plotLayer.getBounds().isValid()) map.fitBounds(plotLayer.getBounds(), { padding: [30, 30] });
+            else toast('कोई वैध प्लॉट सीमा नहीं');
+        });
+
+        // Location tracking
+        function stopLocationTracking() {
+            if (locationWatchId !== null) {
+                navigator.geolocation.clearWatch(locationWatchId);
+                locationWatchId = null;
+            }
+            if (locationMarker) { map.removeLayer(locationMarker); locationMarker = null; }
+            if (locationCircle) { map.removeLayer(locationCircle); locationCircle = null; }
+            locateBtn.innerHTML = '<i class="fas fa-location-crosshairs"></i><span>मेरी लोकेशन</span>';
+            locateBtn.classList.remove('loading');
+            isLocationActive = false;
+        }
+
+        function showLocationError(error) {
+            let errorMessage = 'लोकेशन प्राप्त करने में असमर्थ';
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    errorMessage = 'लोकेशन अनुमति अस्वीकृत। सेटिंग में जाकर अनुमति दें।';
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    errorMessage = 'लोकेशन जानकारी उपलब्ध नहीं है।';
+                    break;
+                case error.TIMEOUT:
+                    errorMessage = 'लोकेशन अनुरोध का समय समाप्त हो गया।';
+                    break;
+                default:
+                    errorMessage = 'अज्ञात त्रुटि हुई।';
+                    break;
+            }
+            toast(errorMessage);
+            locateBtn.innerHTML = '<i class="fas fa-location-crosshairs"></i><span>मेरी लोकेशन</span>';
+            locateBtn.classList.remove('loading');
+            isLocationActive = false;
+        }
+
+        function updateLocationUI(position) {
+            const { latitude, longitude, accuracy } = position.coords;
+            if (locationMarker) map.removeLayer(locationMarker);
+            if (locationCircle) map.removeLayer(locationCircle);
+            locationMarker = L.marker([latitude, longitude], {
+                icon: L.divIcon({
+                    html: `<div class="pulse-marker" style="width:16px;height:16px;border-radius:50%;background:#2563eb;border:3px solid #fff;"></div>`,
+                    iconSize: [16, 16],
+                    iconAnchor: [8, 8]
+                })
+            }).addTo(map);
+            locationCircle = L.circle([latitude, longitude], { radius: accuracy }).addTo(map);
+            
+            let foundPlot = null;
+            plotLayer.eachLayer(function (layer) {
+                if (layer.feature && layer.feature.geometry) {
+                    const inside = turf.booleanPointInPolygon(
+                        turf.point([longitude, latitude]),
+                        layer.feature
+                    );
+                    if (inside) {
+                        foundPlot = layer.feature.properties.Name || "अज्ञात";
+                    }
+                }
+            });
+            
+            if (foundPlot) {
+                locationMarker.bindPopup(`<b>आपकी लोकेशन</b><br>प्लॉट: ${foundPlot}`).openPopup();
+                toast(`✅ आप इस plot पर हैं: ${foundPlot}`);
+            } else {
+                locationMarker.bindPopup(`<b>आपकी लोकेशन</b><br>⚠️ कोई plot नहीं मिला`).openPopup();
+                toast("⚠️ कोई plot नहीं मिला");
+            }
+            
+            map.setView([latitude, longitude], 18);
+            toast('आपकी लोकेशन दिखाई जा रही है');
+        }
+
+        // Locate Button
+        let locateBtnActive = false;
+        locateBtn.addEventListener("click", () => {
+            if (locateBtnActive) {
+                stopLocationTracking();
+                locateBtnActive = false;
+                toast('लोकेशन बंद');
+                return;
+            }
+            
+            if (!navigator.geolocation) {
+                toast("आपका ब्राउज़र लोकेशन सपोर्ट नहीं करता");
+                return;
+            }
+            
+            locateBtn.classList.add('loading');
+            locateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>लोकेशन ढूंढ रहा है...</span>';
+            
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    updateLocationUI(position);
+                    locateBtn.innerHTML = '<i class="fas fa-location-crosshairs"></i><span>मेरी लोकेशन</span>';
+                    locateBtn.classList.remove('loading');
+                    locateBtnActive = true;
+                },
+                (error) => {
+                    showLocationError(error);
+                },
+                { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+            );
+        });
+
+        // Real-time Location Toggle Button
+        let realTimeLocationActive = false;
+        let realTimeWatchId = null;
+        locationToggleBtn.addEventListener('click', () => {
+            realTimeLocationActive = !realTimeLocationActive;
+            if (realTimeLocationActive) {
+                locationToggleBtn.classList.add('active');
+                toast('रियल-टाइम लोकेशन चालू');
+                if (!navigator.geolocation) {
+                    toast("आपका ब्राउज़र लोकेशन सपोर्ट नहीं करता");
+                    realTimeLocationActive = false;
+                    locationToggleBtn.classList.remove('active');
+                    return;
+                }
+                realTimeWatchId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        updateLocationUI(position); // Reuse the update function for 100% plot detection (based on geo data)
+                    },
+                    (error) => {
+                        showLocationError(error);
+                        realTimeLocationActive = false;
+                        locationToggleBtn.classList.remove('active');
+                    },
+                    { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+                );
+            } else {
+                locationToggleBtn.classList.remove('active');
+                if (realTimeWatchId !== null) {
+                    navigator.geolocation.clearWatch(realTimeWatchId);
+                    realTimeWatchId = null;
+                }
+                if (locationMarker) { map.removeLayer(locationMarker); locationMarker = null; }
+                if (locationCircle) { map.removeLayer(locationCircle); locationCircle = null; }
+                toast('रियल-टाइम लोकेशन बंद');
+            }
+        });
+
+        // Direction Button (Placeholder - Not implemented)
+        directionBtn.addEventListener('click', () => {
+            toast('दिशा: कार्य प्रगति पर है');
+        });
+
+        // Manual measurement
+        let measuring = false, pts = [], markers = [], preview = null, liveLabel = null, finalLabel = null;
+        function createBlueCircleMarker(latlng) {
+            return L.marker(latlng, { 
+                icon: L.divIcon({ 
+                    html: `<div style="width:12px;height:12px;border-radius:50%;background:transparent;border:3px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.2);"></div>`, 
+                    className: '',
+                    iconSize: [12, 12], 
+                    iconAnchor: [6, 6] 
+                }), 
+                draggable: true 
+            });
+        }
+
+        measureToggleBtn.addEventListener('click', () => {
+            measurePanel.style.display = measurePanel.style.display === 'none' ? 'block' : 'none';
+            if (measurePanel.style.display === 'none') {
+                clearMeasure(true); measuring = false;
+                startMeasureBtn.innerHTML = '<i class="fas fa-play"></i><span>शुरू</span>';
+                startMeasureBtn.disabled = false; undoMeasureBtn.disabled = true; finishMeasureBtn.disabled = true;
+            }
+            toast(measurePanel.style.display === 'block' ? 'मैनुअल माप टूल खुला' : 'मैनुअल माप टूल बंद');
+        });
+
+        map.on('click', (e) => {
+            if (measuring) {
+                const marker = createBlueCircleMarker(e.latlng).addTo(map);
+                markers.push(marker);
+                pts.push([e.latlng.lng, e.latlng.lat]);
+                undoMeasureBtn.disabled = false;
+                finishMeasureBtn.disabled = pts.length < 3;
+                marker.on('drag', (ev) => {
+                    try {
+                        const idx = markers.indexOf(marker);
+                        const p = ev.target.getLatLng();
+                        if (idx >= 0) { pts[idx] = [p.lng, p.lat]; updatePreview(); }
+                    } catch (ee) { console.error('Drag error:', ee); toast('बिंदु खींचने में त्रुटि'); }
+                });
+                updatePreview();
+                toast(`बिंदु जोड़ा: ${pts.length}`);
+            }
+            if (sidebar.classList.contains('open') && !measuring) {
+                sidebar.classList.remove('open');
+                userGuidePanel.classList.remove('open');
+                toast('मेन्यू बंद');
+            }
+        });
+
+        startMeasureBtn.addEventListener('click', () => {
+            measuring = !measuring;
+            startMeasureBtn.innerHTML = measuring ? '<i class="fas fa-pause"></i><span>रोकें</span>' : '<i class="fas fa-play"></i><span>शुरू</span>';
+            startMeasureBtn.disabled = false;
+            finishMeasureBtn.disabled = pts.length < 3;
+            toast(measuring ? 'मैनुअल माप शुरू' : 'मैनुअल माप रुका');
+        });
+
+        undoMeasureBtn.addEventListener('click', () => {
+            if (markers.length === 0) return;
+            const m = markers.pop(); if (m) map.removeLayer(m);
+            pts.pop();
+            undoMeasureBtn.disabled = markers.length === 0;
+            finishMeasureBtn.disabled = pts.length < 3;
+            updatePreview();
+            toast('पिछला बिंदु हटाया');
+        });
+
+        finishMeasureBtn.addEventListener('click', () => {
+            if (pts.length < 3) return toast('क्षेत्रफल के लिए ≥ 3 बिंदु चाहिए');
+            measuring = false;
+            startMeasureBtn.innerHTML = '<i class="fas fa-play"></i><span>शुरू</span>';
+            startMeasureBtn.disabled = false; finishMeasureBtn.disabled = true; undoMeasureBtn.disabled = true;
+            try {
+                const poly = turf.polygon([[...pts, pts[0]]]);
+                const area_m2 = turf.area(poly);
+                const c = turf.centroid(poly).geometry.coordinates;
+                if (finalLabel) map.removeLayer(finalLabel);
+                finalLabel = L.marker([c[1], c[0]], { icon: L.divIcon({ html: `<div style="background:white;padding:4px 8px;border-radius:var(--radius);border:1px solid #2563eb;">${formatSelected(area_m2, unitSelect)}</div>` }), interactive: false }).addTo(map);
+                toast(`क्षेत्रफल: ${formatSelected(area_m2, unitSelect)}`);
+            } catch (e) {
+                console.error('Finish measure error:', e);
+                toast('माप समाप्त करने में त्रुटि');
+            }
+        });
+
+        clearMeasureBtn.addEventListener('click', () => {
+            clearMeasure(true);
+            measuring = false;
+            startMeasureBtn.innerHTML = '<i class="fas fa-play"></i><span>शुरू</span>';
+            startMeasureBtn.disabled = false; finishMeasureBtn.disabled = true; undoMeasureBtn.disabled = true;
+            measureInfo.textContent = 'बिंदु: 0';
+            toast('मैनुअल माप साफ़ किया');
+        });
+
+        function clearMeasure(full = true) {
+            pts = [];
+            markers.forEach(m => map.removeLayer(m)); markers = [];
+            if (preview) { map.removeLayer(preview); preview = null; }
+            if (liveLabel) { map.removeLayer(liveLabel); liveLabel = null; }
+            if (full && finalLabel) { map.removeLayer(finalLabel); finalLabel = null; }
+        }
+
+        function updatePreview() {
+            if (preview) { map.removeLayer(preview); preview = null; }
+            if (liveLabel) { map.removeLayer(liveLabel); liveLabel = null; }
+            if (pts.length < 1) {
+                measureInfo.textContent = `बिंदु: ${pts.length}`;
+                return;
+            }
+            const latlngs = pts.map(p => [p[1], p[0]]);
+            try {
+                if (pts.length >= 3) {
+                    preview = L.polygon(latlngs, { color: '#2563eb', weight: 2, opacity: 1, fillOpacity: 0.1 }).addTo(map);
+                    const poly = turf.polygon([[...pts, pts[0]]]);
+                    const area_m2 = turf.area(poly);
+                    const perimeter_m = turf.length(turf.lineString([...pts, pts[0]]), { units: 'kilometers' }) * 1000;
+                    measureInfo.textContent = `बिंदु: ${pts.length} • क्षेत्र: ${formatSelected(area_m2, unitSelect)} • परिधि: ${formatLength(perimeter_m)}`;
+                    const c = turf.centroid(poly).geometry.coordinates;
+                    liveLabel = L.marker([c[1], c[0]], { icon: L.divIcon({ html: `<div style="background:white;padding:4px 8px;border-radius:var(--radius);border:1px solid #2563eb;">${formatSelected(area_m2, unitSelect)}</div>` }), interactive: false }).addTo(map);
+                } else if (pts.length >= 1) {
+                    preview = L.polyline(latlngs, { color: '#2563eb', weight: 2 }).addTo(map);
+                    const line = turf.lineString(pts);
+                    const meters = turf.length(line, { units: 'kilometers' }) * 1000;
+                    measureInfo.textContent = `रेखा: ${formatLength(meters)} • बिंदु: ${pts.length}`;
+                    const mid = latlngs[Math.floor(latlngs.length / 2)];
+                    liveLabel = L.marker(mid, { icon: L.divIcon({ html: `<div style="background:white;padding:4px 8px;border-radius:var(--radius);border:1px solid #2563eb;">${formatLength(meters)}</div>` }), interactive: false }).addTo(map);
+                }
+            } catch (e) {
+                console.warn('Preview update error:', e);
+                toast('माप में त्रुटि, कृपया बिंदु जांचें');
+            }
+        }
+
+        unitSelect.addEventListener('change', () => {
+            if (pts.length >= 3) {
+                try {
+                    const poly = turf.polygon([[...pts, pts[0]]]);
+                    const area_m2 = turf.area(poly);
+                    const perimeter_m = turf.length(turf.lineString([...pts, pts[0]]), { units: 'kilometers' }) * 1000;
+                    if (liveLabel) { map.removeLayer(liveLabel); liveLabel = null; }
+                    const c = turf.centroid(poly).geometry.coordinates;
+                    liveLabel = L.marker([c[1], c[0]], { icon: L.divIcon({ html: `<div style="background:white;padding:4px 8px;border-radius:var(--radius);border:1px solid #2563eb;">${formatSelected(area_m2, unitSelect)}</div>` }), interactive: false }).addTo(map);
+                    measureInfo.textContent = `बिंदु: ${pts.length} • क्षेत्र: ${formatSelected(area_m2, unitSelect)} • परिधि: ${formatLength(perimeter_m)}`;
+                } catch (e) { console.warn('Unit change error:', e); toast('इकाई बदलने में त्रुटि'); }
+            } else if (pts.length >= 1) updatePreview();
+        });
+
+        // Label building
+        function buildLabels() {
+            if (!dataGeo || labelsBuilt || map.getZoom() < MIN_ZOOM_FOR_LABELS) return;
+            labelLayer.clearLayers();
+            const features = dataGeo.features || [];
+            let processed = 0;
+            function processBatch(startIdx) {
+                const endIdx = Math.min(startIdx + LABEL_BATCH_SIZE, features.length);
+                for (let i = startIdx; i < endIdx; i++) {
+                    try {
+                        const f = features[i];
+                        const name = f?.properties?.[PLOT_PROP] ?? 'Unknown';
+                        if (!name || name === 'Unknown') continue;
+                        const c = turf.centroid(f).geometry.coordinates;
+                        labelLayer.addLayer(L.marker([c[1], c[0]], { icon: L.divIcon({ className: 'plot-label', html: `<div style="background:transparent;font-weight:500;color:#000;font-size:9px;text-align:center;">${name}</div>` }), interactive: false }));
+                        processed++;
+                    } catch (e) { console.warn('Label error:', e); }
+                }
+                if (endIdx < features.length) requestAnimationFrame(() => processBatch(endIdx));
+                else { labelsBuilt = true; toast(`प्लॉट नंबर बनाए गए: ${processed} प्लॉट्स`); }
+            }
+            processBatch(0);
+        }
+
+        map.on('zoomend', () => {
+            if (labelsVisible && !labelsBuilt && map.getZoom() >= MIN_ZOOM_FOR_LABELS) buildLabels();
+            if (labelsVisible && map.getZoom() < MIN_ZOOM_FOR_LABELS) map.removeLayer(labelLayer);
+            else if (labelsVisible && map.getZoom() >= MIN_ZOOM_FOR_LABELS && labelsBuilt) map.addLayer(labelLayer);
+        });
+
+        userGuideBtn.addEventListener('click', () => {
+            userGuidePanel.style.transform = 'translateX(0)'; userGuidePanel.style.display = 'block'; sidebar.classList.remove('open'); toast('गाइड खुला');
+        });
+        closeGuideBtn.addEventListener('click', () => { userGuidePanel.style.transform = 'translateX(-120%)'; toast('गाइद बंद'); });
+
+        document.addEventListener('click', (e) => {
+            if (!sidebar.contains(e.target) && !menuBtn.contains(e.target) && !userGuidePanel.contains(e.target) && !userGuideBtn.contains(e.target) && !measuring) {
+                if (sidebar.classList.contains('open')) { sidebar.classList.remove('open'); userGuidePanel.style.transform = 'translateX(-120%)'; toast('मेन्यू बंद'); }
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { sidebar.classList.remove('open'); userGuidePanel.style.transform = 'translateX(-120%)'; toast('बंद किया गया'); }
+        });
+
+        Array.from(document.querySelectorAll('.sidebar .btn-3d')).forEach(btn => {
+            if (!btn.title) {
+                const txt = btn.querySelector('span')?.textContent?.trim();
+                if (txt) btn.title = txt;
+            }
+        });
+
+        setLanguage('hi');
+    </script>
+</body>
+<style>html{
+ color:darkviolet;
+ font-size:25px;
+ font-weight:600;
+}
+</style><script>/*Here write your javascript code*/</script></html>
